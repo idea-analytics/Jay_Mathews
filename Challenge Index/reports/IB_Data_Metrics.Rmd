@@ -1,0 +1,34 @@
+---
+title: "IB Data Metrics"
+output: html_notebook
+---
+
+Getting the total number of IB tests administered
+```{r}
+ib_tests <- IB_Data %>%
+  inner_join(students_df %>% select(academic_year, student_number, school_name), 
+             by = c("academic_year", "student_number")) %>%
+  group_by(academic_year, school_name) %>%
+  summarize(n_IB_Tests = n(),
+            n_students = n_distinct(student_number)) %>%
+  distinct()
+
+write.csv(ib_tests, "ib_tests.csv", row.names = F)
+```
+
+Getting the total number of IB Tests passed
+```{r}
+IB_Passing <- IB_Data %>%
+  inner_join(students_df %>% select(academic_year, student_number, school_name), 
+             by = c("academic_year", "student_number")) %>%
+  mutate(score_4_more = case_when(grade %in% c("4", "5", "6", "7") ~ 1,
+                                  TRUE ~ 0)) %>%
+  group_by(academic_year, school_name) %>%
+  summarize(n_IB_Passed = sum(score_4_more),
+            n_tests = n()) %>%
+  mutate(pct_IB_Passed = n_IB_Passed/n_tests,
+         pct_IB_Passed = round(pct_IB_Passed, digits = 3)) %>%
+  distinct()
+
+write.csv(IB_Passing, "IB_Passing.csv", row.names = F)
+```

@@ -1,0 +1,35 @@
+---
+title: "School Info"
+output: html_notebook
+---
+
+getting the school address 
+```{r}
+schools_address <- get_table(.table_name = "Schools", .database_name = "PROD1", .schema = "Schools",
+                                         .server_name = "RGVPDSD-DWPRD1") %>%
+  select(SchoolName = SchoolShortName,
+         SchoolStreet,
+         SchoolCity,
+         SchoolState,
+         SchoolZipCode,
+         IsDeprecated,
+         SchoolHighestGrade) %>%
+  filter(IsDeprecated == 0,
+         SchoolHighestGrade %in% c(9:12)) %>%
+  collect() %>%
+  select(-IsDeprecated, -SchoolHighestGrade) %>%
+  clean_names() %>%
+  distinct()
+  
+```
+
+
+```{r}
+school_info <- ap_tests_2022 %>%
+  select(school_name) %>%
+  inner_join(schools_address, by = "school_name") %>%
+  distinct()
+
+write.csv(school_info, "school_info.csv", row.names = F)  
+```
+

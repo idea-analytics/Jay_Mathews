@@ -1,0 +1,256 @@
+---
+title: "Jay Mathews Request Challege Index"
+output: html_notebook
+---
+
+Challenge Index Request # 97395661
+
+NAME OF SCHOOL______________________________________________________
+LOCATION_____________________________________________________________
+YOUR NAME AND TITLE_____________________________________________________
+YOUR PHONE AND EMAIL_______________________________________________
+
+1.    Total number of AP tests given in 2022______________________________
+
+2.    Total number of IB or AICE tests given in 2022. (Do NOT count IB TOK or extended essay grades) ____________________________
+
+3.    For those high schools that give both AP and IB, I also need to know how many AP tests in 2022 were taken by IB students who also took an IB test in that same subject that year. I will subtract those overlapping AP tests from the total. Overlap total:_____________________
+
+4.    Total number of seniors who graduated in May or June of 2022. (Do NOT count certificates of completion)    ______________
+
+5.    Percentage of AP tests with scores of 3 or above or IB tests with scores of 4 or above____________________
+
+6.    The percentage of total school enrollment who qualified for free or reduced lunch subsidies. ___________________
+
+7.    Your “Equity and Excellence” percentage. ________________
+(This should be on your AP grade report. It breaks down Equity and Excellence into several categories. We want the  “GRADUATING CLASS SUMMARY.” That Equity and Excellence number is the percentage of all graduating seniors who got at least at 3 on at least one AP test some time in high school.   If you are an IB school, we would love your best estimate of the percentage of your total graduating class that had at least one 4 on one IB test in high school. If you give both IB and AP tests, then we would love a combined figure: the percentage of all graduating seniors who had at least a 3 on an AP test or a 4 on an IB test in high school. We will take your best estimate. ) 
+
+8. Is your school public, public charter or private?__________________ 
+
+----------------------------------------------------------------------------------------------------
+
+First let's create a data frame that has all AP Scholars (3+ on 3 or more exams) regardless of grade level.  `ap_df$passed` is an indicator for earning a 3+ on any exam
+
+```{r id_ap_scholars}
+
+# drop students at IB focused schools
+ap_df_no_ib <- ap_df %>% filter(!ib_school)
+  # mutate(ib_school = case_when(academic_year == "2021-2022" & school_name == "Brownsville" ~ 1,
+  #                              academic_year == "2021-2022" & school_name == "Donna" ~ 1,
+  #                              academic_year == "2021-2022" & school_name == "South Flores" ~ 1,
+  #                              academic_year == "2021-2022" & school_name == "Frontier" ~ 0,
+  #                              academic_year != "2021-2022" & school_name == "Frontier" ~ 1,
+  #                              academic_year != "2021-2022" & school_name == "Brownsville" ~ 1,
+  #                              academic_year != "2021-2022" & school_name == "Donna" ~ 1,
+  #                              academic_year != "2021-2022" & school_name == "South Flores" ~ 1,
+  #                              TRUE ~ 0)) %>%
+  #filter(ib_school == 0)
+
+
+
+ap_n_exams_passed <- ap_df %>% 
+  arrange(student_number, academic_year) %>% 
+  group_by(student_number) %>% 
+  filter(took_test == 1) %>% 
+  mutate(passed_exam_name = if_else(passed, exam_name, as.character(NA))) %>%  # use this the summarize below 
+  summarize(n_exams_passed = sum(passed, na.rm = TRUE),
+            n_exams_attempted = sum(took_test, na.rm = TRUE),
+            names_exams_passed = paste(passed_exam_name, collapse = "|") %>% #capture passed exams
+              str_remove_all(fixed("|NA")) %>% # remove NAs from non-passed exams
+              str_remove_all(fixed("NA|")) # remove NAs from non-passed exams
+              )%>%
+  mutate(ap_scholar = n_exams_passed >= 3,
+         # "NA"s should be acutal NAs
+         names_exams_passed = if_else(names_exams_passed=="NA", 
+                                      as.character(NA), 
+                                      names_exams_passed))
+    
+ap_scholars <- ap_n_exams_passed %>% 
+  filter(ap_scholar)
+
+ap_scholar_year_attained <- ap_df %>% filter(cum_passed == 3) %>% 
+  select(student_number, academic_year) %>% 
+  group_by(student_number) %>% 
+  summarize(academic_year = min(academic_year, na.rm = TRUE)) %>% 
+  distinct()
+
+ap_scholars <- ap_scholars %>% 
+  left_join(ap_scholar_year_attained, by ="student_number")
+
+ap_scholars
+```
+
+AP Scholars require identifying graduates: we can use the `gradudate` column in `ap_df` for this:
+
+```{r graduates}
+
+graduated_seniors <- students_df %>% 
+  filter(graduate) %>%
+         #!school_name %in% ib_exception_schools) %>% 
+  select(student_number, academic_year) %>% 
+  distinct()
+
+graduated_seniors_2022 <- students_df %>%
+  filter(graduate, academic_year == "2021-2022") %>%
+  select(student_number, enrollment_status, academic_year, school_name) %>%
+  left_join(n_graduated_seniors_2022_by_campus, by = "school_name") %>%
+  select(-student_number, -enrollment_status) %>%
+  distinct()
+
+graduated_seniors
+write.csv(graduated_seniors_2022, "graduated_seniors_2022.csv", row.names = F)
+```
+
+Calculating the total number of AP tests given in 2022 by school.
+
+```{r}
+ap_tests_2022 <- ap_df %>%
+  filter(took_test == 1, academic_year == "2021-2022", school_name != "Placeholder") %>%
+  distinct() %>%
+  group_by(school_name) %>%
+  summarize(n_tests = sum(took_test))
+
+write.csv(ap_tests_2022, "ap_tests_2022.csv", row.names = F)
+```
+
+Calculating the overlap of AP Tests and IB Tests for the same subjects
+
+```{r}
+ap_ib_overlap <- ap_tests_2022_ib %>%
+  mutate(subject = case_when(ap_group == "English" ~ "English",
+                             exam_name %in% c("United States History") ~ "History", #"United States Government and Politics""World History", 
+                             ap_group == "Math" ~ "Math", 
+                             exam_name == "Biology" ~ "Biology",
+                             ap_group == "Spanish" ~ "Spanish",
+                             exam_name %in% c("Art History", "Studio Art: 2-D Design Portfolio",
+                                              "Studio Art: Drawing Portfolio", "Studio Art: 3-D Design Portfolio")
+                             ~ "Art")) %>%
+  left_join(ib_data, by = c("academic_year", "student_number", "school_name", "subject")) %>%
+  select(-race, -sped, -at_risk, -lep, -ecd, -subject_id, -course_number) %>%
+  distinct()
+
+write.csv(ap_ib_overlap, "ap_ib_overlap.csv", row.names = F)
+```
+
+Calculating the percentage of AP tests with scores of 3 or above.
+
+```{r}
+ap_tests_passed_2022 <- ap_df %>%
+  filter(took_test == 1, academic_year == "2021-2022", school_name != "Placeholder",
+         !is.na(passed)) %>%
+  distinct() %>%
+  group_by(school_name) %>%
+  summarize(n_tests = sum(took_test),
+            n_passed = sum(passed)) %>%
+  mutate(pct_passed = (n_passed/n_tests),
+         pct_passed = round(pct_passed, digits = 3))
+
+write.csv(ap_tests_passed_2022, "ap_tests_passed_2022.csv", row.names = F)
+```
+
+Calculating the percent of graduating seniors that got a 3 or better on at least 1 AP test some time in high school.
+
+```{r}
+seniors_at_least1_passed <- graduated_seniors %>%
+  filter(academic_year == "2021-2022") %>%
+  left_join(ap_df %>% select(student_number, academic_year, school_name, graduate, cum_passed) %>%
+              filter(academic_year == "2021-2022", graduate == 1), by = c("academic_year", "student_number")) %>%
+  group_by(student_number) %>%
+  mutate(cum_passed = max(cum_passed)) %>%
+  distinct() %>%
+  mutate(passed_1 = case_when(cum_passed >= 1 ~ 1,
+                              TRUE ~ 0)) %>%
+  select(student_number, school_name, passed_1) %>%
+  distinct() %>%
+  group_by(school_name) %>%
+  summarize(passed_1 = sum(passed_1),
+            n_students = n_distinct(student_number)) %>%
+  mutate(pct_passed_1 = (passed_1/n_students),
+         pct_passed_1 = round(pct_passed_1, digits = 3)) %>%
+  distinct()
+
+IB_at_least_1_passed <- graduated_seniors %>% 
+  filter(academic_year == "2021-2022") %>%
+  inner_join(students_df %>% select(academic_year, student_number, school_name) %>%
+               filter(academic_year == "2021-2022"), by = c("academic_year", "student_number")) %>%
+  left_join(ib_data %>% select(student_number, academic_year, school_name, grade) %>%
+  filter(academic_year == "2021-2022"), by = c("academic_year", "student_number", "school_name")) %>%
+  group_by(student_number) %>%
+  mutate(max_grade = max(grade)) %>%
+  select(-grade) %>%
+  distinct() %>%
+  mutate(passed_1_IB = case_when(max_grade %in% c("4", "5", "6", "7") ~ 1,
+                                 TRUE ~ 0)) %>%
+  group_by(school_name) %>%
+  summarize(passed_1_IB = sum(passed_1_IB),
+            n_students = n_distinct(student_number)) %>%
+  mutate(pct_passed_IB = (passed_1_IB/n_students),
+         pct_passed_IB = round(pct_passed_IB, digits = 3)) %>%
+    distinct()
+
+passed_ap <-  graduated_seniors %>%
+  filter(academic_year == "2021-2022") %>%
+  left_join(ap_df %>% select(student_number, academic_year, school_name, graduate, cum_passed) %>%
+              filter(academic_year == "2021-2022", graduate == 1), by = c("academic_year", "student_number")) %>%
+  group_by(student_number) %>%
+  mutate(cum_passed = max(cum_passed)) %>%
+  distinct() %>%
+  mutate(passed_1_AP = case_when(cum_passed >= 1 ~ 1,
+                              TRUE ~ 0)) %>%
+  select(academic_year, student_number, school_name, passed_1_AP) %>%
+  distinct()
+
+passed_ib <- graduated_seniors %>% 
+  filter(academic_year == "2021-2022") %>%
+  inner_join(students_df %>% select(academic_year, student_number, school_name) %>%
+               filter(academic_year == "2021-2022"), by = c("academic_year", "student_number")) %>%
+  left_join(ib_data %>% select(student_number, academic_year, school_name, grade) %>%
+  filter(academic_year == "2021-2022"), by = c("academic_year", "student_number", "school_name")) %>%
+  group_by(student_number) %>%
+  mutate(max_grade = max(grade)) %>%
+  select(-grade) %>%
+  distinct() %>%
+  mutate(passed_1_IB = case_when(max_grade %in% c("4", "5", "6", "7") ~ 1,
+                                 TRUE ~ 0))
+
+passed_either <- passed_ap %>%
+  inner_join(passed_ib %>% select(-max_grade), by = c("academic_year", "student_number", "school_name")) %>%
+  mutate(passed_ap_or_ib = case_when(passed_1_AP == 1 ~ 1,
+                                     passed_1_IB == 1 ~ 1,
+                                     TRUE ~ 0)) %>%
+  group_by(school_name) %>%
+  summarize(n_passed_either = sum(passed_ap_or_ib),
+            n_students = n_distinct(student_number)) %>%
+  mutate(pct_passed_either = (n_passed_either/n_students),
+         pct_passed_either = round(pct_passed_either, digits = 3)) %>%
+  distinct()
+  
+write.csv(seniors_at_least1_passed, "seniors_at_least1_passed.csv", row.names = F) 
+write.csv(IB_at_least_1_passed, "IB_at_least_1_passed.csv", row.names = F)
+write.csv(passed_either, "passed_either.csv", row.names = F)
+```
+
+Getting the percentage of total school enrollment that qualifies for Free or Reduced Lunch (FRL)
+```{r}
+FRL <- students_df %>%
+  filter(academic_year == "2021-2022",
+         grade_level_id %in% c(9:12),
+         school_name != "Sample") %>%
+  group_by(academic_year, school_name) %>%
+  summarize(frl = sum(ecd),
+            n_students = n_distinct(student_number)) %>%
+  mutate(pct_frl = frl/n_students,
+         pct_frl = round(pct_frl, digits = 3)) %>%
+  distinct()
+
+write.csv(FRL, "FRL.csv", row.names = F)
+```
+
+```{r}
+highest_grade <- students_df %>%
+  filter(academic_year == "2021-2022") %>%
+  group_by(school_name) %>%
+  summarize(max_grade = max(grade_level_id)) %>%
+  distinct()
+```
+

@@ -1,0 +1,56 @@
+---
+title: "Getting AP Data"
+output: html_notebook
+---
+ Pulling in the AP Data
+```{r}
+ap_result_conn_current_year <- get_table(.table_name = "APResult", .database_name = "Dashboard", .schema = "dbo",
+                                         .server_name = "RGVPDRA-DASQL") %>%
+  filter(BestScore == "TRUE", SchoolYear == "2021-2022") %>%
+  select(StudentNumberDelta, ExamCode, AP_Result =  ExamGrade, AdminYear, GradeLevel, BestScore)
+
+ap_result_conn_last_year <- get_table(.table_name = "APResult", .database_name = "Dashboard", .schema = "dbo",
+                                      .server_name = "RGVPDRA-DASQL") %>%
+  filter(SchoolYear != "2021-2022") %>%
+  group_by(StudentNumberDelta, ExamCode, AdminYear, GradeLevel) %>%
+  dplyr::summarize(AP_Result = max(ExamGrade)) %>%
+  mutate(BestScore = "TRUE") %>%
+  select(StudentNumberDelta, ExamCode, AP_Result, AdminYear, GradeLevel)
+  
+ap_result_conn_all_prior_year <- get_table(.table_name = "APResult", .database_name = "Dashboard", .schema = "dbo",
+                                           .server_name = "RGVPDRA-DASQL") %>%
+  filter(SchoolYear != "2021-2022" | SchoolYear != "2020-2021") %>%
+  group_by(StudentNumberDelta, ExamCode, AdminYear, GradeLevel) %>%
+  dplyr::summarize(AP_Result = max(ExamGrade)) %>%
+  mutate(BestScore = "TRUE") %>%
+  select(StudentNumberDelta, ExamCode, AP_Result, AdminYear, GradeLevel)
+
+
+ap_result_conn <- ap_result_conn_current_year %>%
+  union_all(ap_result_conn_last_year) %>%
+  union_all(ap_result_conn_all_prior_year)
+
+```
+
+# Get AP exam codes
+```{r}
+ap_code_conn <- get_table(.table_name = "APCode", .database_name = "Dashboard", .schema = "dbo",
+                          .server_name = "RGVPDRA-DASQL") %>%
+  select(ExamCode, ExamName)
+
+glimpse(ap_code_conn)
+```
+
+# Join and light munging
+```{r}
+ap_results_codes <- ap_result_conn %>%
+  left_join(ap_code_conn, by = "ExamCode") %>%
+  #filter(!(GradeLevel %in% c('Unknown','< 9','Not in High School'))) %>%
+  collect()  %>%
+  mutate(AcademicYear = glue::glue('20{as.integer(AdminYear)-1}-20{AdminYear}'),
+         AcademicYear = if_else(AcademicYear==as.character('209-2010'),
+                                as.character('2009-2010'),
+                                as.character(AcademicYear)),
+         TookTest = 1)
+```
+

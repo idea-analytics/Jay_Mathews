@@ -1,0 +1,51 @@
+---
+title: "IB Data"
+output: html_notebook
+---
+
+making connection to the table in the warehouse with IB Data
+```{r}
+IB_Data_conn <- get_table(.table_name = "IBScores", .database_name = "PROD2", .schema = "Assessments",
+                                         .server_name = "RGVPDSD-DWPRD2")
+```
+
+Pulling the data that we need
+```{r}
+IB_Data <- IB_Data_conn %>%
+  filter(AcademicYear == "2021-2022",
+         !Grade %in% c("A", "B", "C", "D", "E", ""),
+         !TCPCourseCode %like% "%-EE",
+         !TCPCourseCode %like% "%-TK") %>%
+  select(AcademicYear,
+         StudentNumber,
+         SubjectID,
+         CourseNumber,
+         TCPCourseCode,
+         Grade
+         ) %>%
+  distinct() %>%
+  collect() %>%
+  #mutate(Grade = as.numeric(Grade)) %>%
+  janitor::clean_names()
+
+```
+
+
+```{r}
+Grades <- IB_Data %>%
+  distinct(tcp_course_code, subject_id)
+```
+
+```{r}
+ib_data <- IB_Data %>%
+  inner_join(students_df %>% select(academic_year, student_number, school_name), 
+             by = c("academic_year", "student_number")) %>%
+  mutate(subject = case_when(subject_id == 1 ~ "English",
+                             subject_id == 2 ~ "History",
+                             subject_id == 3 ~ "Math",
+                             subject_id == 5 ~ "Biology",
+                             subject_id == 8 ~ "Spanish",
+                             subject_id %in% c(10, 18) ~ "Art")) %>%
+  distinct()
+```
+

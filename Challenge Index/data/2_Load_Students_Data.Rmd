@@ -1,0 +1,168 @@
+---
+title: "Get Students Data"
+output: html_notebook
+---
+
+```{r}
+stus_conn <-get_students() %>%
+  filter(!StudentNumber %in% c("108062879", "108052462", "108042606", "108029086",
+                               "108042604", "108063038", "108037370", "108029065",
+                               "108044239", "108035719", "108043514", "108001820",
+                               "108044248", "108041317", "108007910", "108045746",
+                               "108045532", "108029303", "108041330")) %>%
+  select(StudentNumber,
+         LastName,
+         FirstName,
+         AcademicYear,
+         SchoolNumber,
+         GradeLevelID,
+         GraduatedSchoolId,
+         GraduationClass,
+         ExitDate,
+         ExitComment,
+         SPED,
+         AtRisk = AtRiskFlag,
+         ECD = EconomicDisadvantageCode,
+         LEP = ELLCode,
+         EnrollmentStatus,
+         Hispanic = FederalHispanicFlag,
+         White = FederaRaceW,
+         Black = FederaRaceB,
+         Asian = FederaRaceA,
+         P_Islander = FederaRaceP,
+         Am_Indian = FederaRaceI
+  ) %>%
+  dplyr::mutate(Hispanic = as.numeric(Hispanic),
+         White = as.numeric(White),
+         Black = as.numeric(Black),
+         `Asian/PI` = case_when(Asian == 1 ~ 1,
+                                P_Islander == 1 ~ 1),
+         `Asian/PI` = as.numeric(if_else(`Asian/PI` == 1, 1, 0)),
+         Other = case_when(Am_Indian == 1 ~ 1),
+         Other = as.numeric(if_else(Other == 1, 1, 0))) %>%
+  select(-P_Islander, -Asian, -Am_Indian) %>%
+  filter(GradeLevelID %in% c(9:12),
+         AcademicYear %in% c('2017-2018',
+                             '2018-2019',
+                             '2019-2020',
+                             '2020-2021',
+                             '2021-2022'),
+         month(ExitDate) %in% c(5,6)
+  ) %>%
+  collect()
+```
+
+# Munge demographics and collapse Race Ethnicity -----
+```{r}
+stus_demogr <- stus_conn %>%
+  mutate(SPED = if_else(SPED==0, 0, 1),
+         AtRisk = if_else(AtRisk==0, 0, 1),
+         ECD = if_else(ECD==0, 0, 1),
+         LEP = if_else(LEP==1, 1, 0),
+  ) %>%
+  # Need to give students mutually exclusive, collectively exhaustive race categories
+  # IF hispanic than hispanic and no other race
+  # If more than one race, then code as multi-racial,
+  # if no races indicated, then code as such
+  dplyr::mutate(White = if_else(Hispanic == 1, 0, White),
+         Black = if_else(Hispanic == 1, 0, Black),
+         `Asian/PI` = if_else(Hispanic == 1, 0, `Asian/PI`),
+         Other = if_else(Hispanic == 1, 0, Other)) %>%
+  dplyr::mutate(total_race = (Hispanic + White + Black + `Asian/PI` + Other),
+         Multi = if_else(total_race > 1, 1, 0),
+         None = if_else(total_race == 0, 1, 0)) %>%
+  dplyr::mutate(Hispanic = if_else(Multi ==1, 0, Hispanic),
+         White = if_else(Multi ==1, 0, White),
+         Black = if_else(Multi ==1, 0, Black),
+         `Asian/PI` = if_else(Multi ==1, 0, `Asian/PI`),
+         Other = if_else(Multi ==1, 0, Other)) %>%
+  mutate(Other = if_else(Other == 1 | None == 1 , 1, 0)) %>%
+  # testing this
+  select(-total_race, -None) %>%
+  #Get race indicator into a single column
+  pivot_longer(Hispanic:Multi, names_to = "Race", values_to = "race_indicator") %>%
+  filter(race_indicator == 1) %>%
+  select(-race_indicator) %>%
+  distinct() %>%
+  mutate(Race = case_when(#Race == "Am_Indian" ~ "American Indian/Alaskan Native",
+    #Race == "P_Islander" ~ "Native Hawaiian/Pacific Islander",
+    Race == "Multi" ~ "Multi-racial",
+    TRUE ~ Race)) %>%
+  collect()
+```
+
+# Get Schools ----
+```{r}
+schools <- get_schools() %>%
+  select(SchoolNumber,
+         SchoolName = SchoolShortName, RegionID) #%>%
+#collect()
+
+# Get Regions ----
+regions <- get_regions() %>%
+  select(RegionID, Region = RegionDescription, State)
+
+# Join Regions to Schoools ----
+schools_regions <- schools %>%
+  left_join(regions, by = "RegionID") %>%
+  collect()
+```
+
+# Join students with schools_regions, and light munging ----
+```{r}
+students_df <- stus_demogr %>%
+  inner_join(schools_regions, by = "SchoolNumber") %>%
+  # want to ensure that for demographic indicators a student is considered
+  # having an indicator for the whole year even if it was applied for part
+  # of the year
+  group_by(StudentNumber,
+           LastName,
+           FirstName,
+           AcademicYear,
+           SchoolNumber,
+           SchoolName,
+           Region,
+           Race,
+           GradeLevelID,
+           GraduatedSchoolId,
+           GraduationClass,
+           ExitComment
+  ) %>%
+  dplyr::summarize(SPED = max(SPED, na.rm=TRUE),
+            AtRisk = max(AtRisk, na.rm=TRUE),
+            ECD = max(ECD, na.rm=TRUE),
+            LEP = max(LEP, na.rm=TRUE),
+            EnrollmentStatus = max(EnrollmentStatus, na.rm=TRUE)
+  ) %>%
+  group_by(StudentNumber,
+           LastName,
+           FirstName,
+           AcademicYear,
+           SchoolNumber,
+           SchoolName,
+           Region,
+           Race,
+           SPED,
+           AtRisk,
+           ECD,
+           LEP,
+           GraduatedSchoolId,
+           GraduationClass,
+           ExitComment,
+           EnrollmentStatus
+  ) %>%
+  dplyr::summarize(GradeLevelID = max(GradeLevelID, na.rm = TRUE)) %>%
+  #collect() %>%
+  clean_names() %>%
+  ungroup() %>%
+  # create indicator for a graduate
+  mutate(graduated_comment = exit_comment == "Graduated",
+         academic_year_short = str_extract(academic_year, regex("\\d{4}$")) %>% as.integer(),
+         graduate = graduated_comment & (academic_year_short == graduation_class) & graduated_school_id != 0) %>%
+  # drop unnecessary columns used to create graduate column
+  select(-graduated_comment,
+         -exit_comment,
+         -academic_year_short,
+         -graduation_class,
+         -graduated_school_id)
+```
